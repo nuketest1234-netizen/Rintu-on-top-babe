@@ -14,7 +14,15 @@ try {
 } catch (e) {}
 
 const { Client } = require("discord.js-selfbot-v13");
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType, entersState, VoiceConnectionStatus } = require("@discordjs/voice");
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus,
+    StreamType,
+    entersState,
+    VoiceConnectionStatus
+} = require("@discordjs/voice");
 const { spawn } = require("child_process");
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const playdl = require('play-dl');
@@ -23,21 +31,21 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// ─── dashboard auth ───
+// dashboard auth
 const DASH_PASS = process.env.DASH_PASS || '';
 if (DASH_PASS) {
     app.use((req, res, next) => {
         if (req.path === '/' && req.query.p !== DASH_PASS) {
-            return res.status(401).send('unauthorized - add ?p=yourpassword');
+            return res.status(401).send('unauthorized — add ?p=yourpassword');
         }
         next();
     });
 }
 
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// ─── state ───
+// state
 let tokens = [];
 let clients = [];
 let connections = new Map();
@@ -66,7 +74,6 @@ let keepAliveInterval = null;
 
 console.log("waiting for tokens from dashboard...");
 
-// ─── helpers ───
 function stopFFmpeg() {
     if (currentFFmpegProcess) {
         try { currentFFmpegProcess.kill("SIGKILL"); } catch (e) {}
@@ -105,7 +112,6 @@ function isDirectAudio(url) {
     return /\.(mp3|ogg|webm|m4a|wav|opus|aac)(\?.*)?$/i.test(url);
 }
 
-// ─── audio pipeline ───
 function buildFilters() {
     const f = ["highpass=f=60"];
     if (superLoudMode) {
@@ -179,7 +185,6 @@ function startFFmpegStream(inputSource) {
     if (loudMode) startLoudMode();
 }
 
-// ─── silent keepalive (avoids discord 120s voice timeout) ───
 function startVoiceKeepAlive() {
     if (keepAliveInterval) clearInterval(keepAliveInterval);
     keepAliveInterval = setInterval(() => {
@@ -187,13 +192,12 @@ function startVoiceKeepAlive() {
             if (!conn) return;
             const status = conn.state.status;
             if (status === VoiceConnectionStatus.Disconnected || status === VoiceConnectionStatus.Destroyed) {
-                console.log(`bot ${index+1} voice dropped (${status}), will rejoin on next play`);
+                console.log(`bot ${index+1} voice dropped (${status})`);
             }
         });
     }, 30000);
 }
 
-// ─── bots ───
 function startBots() {
     if (tokens.length === 0) { console.log('no tokens'); return; }
     clients.length = 0;
@@ -234,7 +238,6 @@ function stopBots() {
     console.log("all bots stopped");
 }
 
-// ─── api ───
 app.get('/api/status', (req, res) => {
     res.json({
         isRunning: isBotRunning,
@@ -301,114 +304,4 @@ app.post('/api/command', async (req, res) => {
             response = 'max volume 10000%';
         }
         else if (c === 'blast') { blastMode = !blastMode; pungiMode = superLoudMode = forceLoudMode = false; if (currentUrl) startFFmpegStream(currentUrl); response = `blast ${blastMode?'on':'off'}`; }
-        else if (c === 'doubleblast') { blastMode = true; blastVolume = 100.0; currentVolumeMultiplier = 100.0; if (currentUrl) startFFmpegStream(currentUrl); response = 'double blast'; }
-        else if (c === 'superloud') { superLoudMode = !superLoudMode; if (superLoudMode) { blastMode = pungiMode = forceLoudMode = false; } if (currentUrl) startFFmpegStream(currentUrl); response = `superloud ${superLoudMode?'on':'off'}`; }
-        else if (c === 'forceloud') { forceLoudMode = !forceLoudMode; if (forceLoudMode) { blastMode = pungiMode = superLoudMode = false; } if (currentUrl) startFFmpegStream(currentUrl); response = `forceloud ${forceLoudMode?'on':'off'}`; }
-        else if (c === 'bassboost') { isBassboosted = !isBassboosted; if (currentUrl) startFFmpegStream(currentUrl); response = `bass ${isBassboosted?'on':'off'}`; }
-        else if (c === 'pungi') { pungiMode = !pungiMode; if (pungiMode) { blastMode = superLoudMode = forceLoudMode = false; } if (currentUrl) startFFmpegStream(currentUrl); response = `pungi ${pungiMode?'on':'off'}`; }
-        else if (c.startsWith('pungiset ')) { const v = parseFloat(command.slice(9)); if (!isNaN(v) && v>=1 && v<=200) { pungiIntensity = v; if (pungiMode && currentUrl) startFFmpegStream(currentUrl); response = `pungi ${v}x`; } else response = 'pungiset 1-200'; }
-        else if (c === 'loudmode') { loudMode = !loudMode; if (loudMode) startLoudMode(); else stopLoudMode(); response = `loudmode ${loudMode?'on':'off'}`; }
-        else if (c === 'loop') { loopMode = !loopMode; response = `loop ${loopMode?'on':'off'}`; }
-        else if (c === 'status') { response = `now: ${currentTitle}\nbots: ${clients.length}\nvol: ${Math.round(currentVolumeMultiplier*100)}%\nloop: ${loopMode?'on':'off'}`; }
-        else if (/^\d{15,25}$/.test(c)) {
-            currentChannelId = c;
-            let joined = 0;
-            for (const [index, client] of clients.entries()) {
-                try {
-                    const channel = await client.channels.fetch(c);
-                    if (!channel || !channel.guild) continue;
-                    const conn = joinVoiceChannel({
-                        channelId: channel.id,
-                        guildId: channel.guild.id,
-                        adapterCreator: channel.guild.voiceAdapterCreator,
-                        selfMute: false,
-                        selfDeaf: false,
-                        group: client.user.id
-                    });
-                    const player = createAudioPlayer();
-                    conn.subscribe(player);
-
-                    // reconnect handler
-                    conn.on('stateChange', async (oldS, newS) => {
-                        if (newS.status === VoiceConnectionStatus.Disconnected) {
-                            try {
-                                await Promise.race([
-                                    entersState(conn, VoiceConnectionStatus.Signalling, 5000),
-                                    entersState(conn, VoiceConnectionStatus.Connecting, 5000),
-                                ]);
-                            } catch {
-                                try { conn.destroy(); } catch(e){}
-                                setTimeout(() => {
-                                    try {
-                                        const nc = joinVoiceChannel({
-                                            channelId: channel.id,
-                                            guildId: channel.guild.id,
-                                            adapterCreator: channel.guild.voiceAdapterCreator,
-                                            selfMute: false, selfDeaf: false, group: client.user.id
-                                        });
-                                        nc.subscribe(players.get(index));
-                                        connections.set(index, nc);
-                                    } catch(e) { console.log('rejoin fail:', e.message); }
-                                }, 3000);
-                            }
-                        }
-                    });
-
-                    player.on(AudioPlayerStatus.Idle, () => {
-                        if (loopMode && currentUrl && !isPaused && index === 0) {
-                            setTimeout(() => startFFmpegStream(currentUrl), 500);
-                        }
-                    });
-
-                    connections.set(index, conn);
-                    players.set(index, player);
-                    joined++;
-                } catch (err) {
-                    console.log(`bot ${index+1} join error: ${err.message}`);
-                }
-            }
-            response = `joined ${joined}/${clients.length} bots to ${c}`;
-        }
-        else response = 'unknown cmd. type help';
-    } catch (err) {
-        response = `error: ${err.message}`;
-    }
-
-    io.emit('command_response', { command, response });
-    res.json({ response });
-});
-
-// ─── socket ───
-io.on('connection', (socket) => {
-    console.log('dashboard connected');
-    socket.emit('status_update', {
-        isRunning: isBotRunning,
-        botCount: clients.length,
-        totalTokens: tokens.length,
-        currentTitle,
-        volume: Math.round(currentVolumeMultiplier * 100)
-    });
-
-    socket.on('start_bots_with_tokens', (data) => {
-        const incoming = (data?.tokens || []).map(t => (t || '').trim()).filter(t => t.length > 20);
-        if (incoming.length === 0) {
-            socket.emit('command_response', { command: 'start', response: 'no valid tokens (must be >20 chars)' });
-            return;
-        }
-        if (isBotRunning) stopBots();
-        tokens = incoming;
-        console.log(`tokens from dashboard: ${tokens.length}`);
-        setTimeout(() => {
-            startBots();
-            socket.emit('command_response', { command: 'start', response: `starting ${tokens.length} bots` });
-        }, 600);
-    });
-
-    socket.on('start_bots', () => startBots());
-    socket.on('stop_bots', () => stopBots());
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`dashboard on ${PORT}`);
-});
+        else if (c === 'doubleblast') { blastMode = true;
