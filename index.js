@@ -5,7 +5,6 @@ const socketIo = require('socket.io');
 const fs = require("fs");
 const path = require("path");
 
-// selfbot patch
 try {
     const ClientUserSettingManager = require("./node_modules/discord.js-selfbot-v13/src/managers/ClientUserSettingManager.js");
     if (ClientUserSettingManager && ClientUserSettingManager.prototype) {
@@ -59,7 +58,6 @@ if (DASH_PASS) {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// state
 let tokens = [];
 let clients = [];
 let connections = new Map();
