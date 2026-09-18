@@ -31,6 +31,20 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
+// debug route
+app.get('/debug', (req, res) => {
+    const publicDir = path.join(__dirname, 'public');
+    const indexPath = path.join(publicDir, 'index.html');
+    res.json({
+        __dirname: __dirname,
+        cwd: process.cwd(),
+        publicExists: fs.existsSync(publicDir),
+        publicContents: fs.existsSync(publicDir) ? fs.readdirSync(publicDir) : null,
+        indexPath: indexPath,
+        indexExists: fs.existsSync(indexPath)
+    });
+});
+
 // dashboard auth
 const DASH_PASS = process.env.DASH_PASS || '';
 if (DASH_PASS) {
